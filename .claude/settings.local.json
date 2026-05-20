@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -v \"^/Users/youmeng/MyProjects/zentao$\")",
+      "Bash(npx playwright *)",
+      "Bash(npm install *)",
+      "Bash(npm run *)"
+    ]
+  }
+}

@@ -1,0 +1,134 @@
+import { getJson } from "./client.js";
+import { chromium } from "playwright-core";
+import { getOrRefreshSession } from "../auth/cas-login.js";
+import { config } from "../config.js";
+
+export interface BugListItem {
+  id: string;
+  title: string;
+  severity: string;
+  pri: string;
+  type: string;
+  status: string;
+  assignedTo: string;
+  openedBy: string;
+  openedDate: string;
+  resolvedBy: string;
+  resolution: string;
+}
+
+export interface BugDetail extends BugListItem {
+  steps: string;
+  product: string;
+  module: string;
+  project: string;
+  os: string;
+  browser: string;
+  deadline: string;
+  openedBuild: string;
+  resolvedDate: string;
+  closedBy: string;
+  closedDate: string;
+  lastEditedBy: string;
+  lastEditedDate: string;
+}
+
+interface BugBrowseResponse {
+  bugs: Record<string, BugListItem>;
+  pager: unknown;
+}
+
+interface BugViewResponse {
+  bug: BugDetail;
+}
+
+export async function listBugs(params: {
+  productId?: number;
+  projectId?: number;
+  assignedTo?: string;
+  status?: string;
+  limit?: number;
+}): Promise<BugListItem[]> {
+  let path = "bug-browse";
+
+  if (params.projectId) {
+    path = `project-bug-${params.projectId}`;
+  } else if (params.productId) {
+    path = `bug-browse-${params.productId}`;
+  }
+
+  if (params.status) {
+    path += `-0-${params.status}`;
+  }
+
+  path += ".json";
+
+  const data = await getJson<BugBrowseResponse>(path);
+  let bugs = Object.values(data.bugs ?? {});
+
+  if (params.assignedTo) {
+    bugs = bugs.filter((b) => b.assignedTo === params.assignedTo);
+  }
+
+  if (params.limit) {
+    bugs = bugs.slice(0, params.limit);
+  }
+
+  return bugs;
+}
+
+export async function getBug(bugId: number): Promise<BugDetail> {
+  const data = await getJson<BugViewResponse>(`bug-view-${bugId}.json`);
+  return data.bug;
+}
+
+export async function resolveBug(
+  bugId: number,
+  resolution: string = "fixed",
+  build: string = "trunk",
+  comment?: string,
+): Promise<{ result: string }> {
+  const session = await getOrRefreshSession();
+  const browser = await chromium.launch({ channel: "chrome", headless: true });
+
+  try {
+    const context = await browser.newContext();
+    await context.addCookies([
+      { name: "zentaosid", value: session.zentaosid, domain: new URL(config.zentaoUrl).hostname, path: "/" },
+    ]);
+
+    const page = await context.newPage();
+    await page.goto(`${config.zentaoUrl}/bug-resolve-${bugId}.html?onlybody=yes`, { waitUntil: "networkidle" });
+
+    await page.evaluate(
+      ({ resolution, build, comment }) => {
+        const resSelect = document.querySelector("#resolution") as HTMLSelectElement;
+        if (resSelect) {
+          resSelect.value = resolution;
+          resSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+
+        const buildSelect = document.querySelector("#resolvedBuild") as HTMLSelectElement;
+        if (buildSelect) buildSelect.value = build;
+
+        if (comment) {
+          const ke = (window as any).KindEditor;
+          if (ke) {
+            const keys = Object.keys(ke.instances);
+            const editor = ke.instances[keys[keys.length - 1]];
+            editor.html(`<p>${comment}</p>`);
+            editor.sync();
+          }
+        }
+      },
+      { resolution, build, comment },
+    );
+
+    await page.click("#submit");
+    await page.waitForTimeout(3000);
+
+    return { result: "success" };
+  } finally {
+    await browser.close();
+  }
+}
