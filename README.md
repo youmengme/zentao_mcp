@@ -1,4 +1,4 @@
-# zentao-mcp
+# ahs-zentao
 
 禅道 Bug 管理系统的 MCP Server，通过 Playwright 自动化 CAS SSO 登录，为 Claude Code / Codex 提供禅道操作能力。
 
@@ -17,71 +17,31 @@
 - 禅道 12.x 专业版（已验证 12.5.3，理论上 12.0+ 均可）
 - 禅道接入 CAS SSO 登录
 
-## 安装
+## 快速开始
+
+### 1. 配置账号
 
 ```bash
-git clone <your-repo-url>
-cd zentao
-npm install
-npm run build
+npx ahs-zentao init
 ```
 
-## 配置环境变量
+按提示输入禅道地址、CAS 地址、用户名和密码，配置会保存到 `~/.ahs-zentao/.env`。
+
+### 2. 接入 Claude Code
 
 ```bash
-cp .env.example .env
+npx ahs-zentao add claude
 ```
 
-编辑 `.env`，填入你的禅道账号信息：
+执行后会自动将 MCP Server 配置写入 `~/.claude/.mcp.json`，重启 Claude Code 即可使用。
 
-```env
-ZENTAO_URL=http://zentao.xxx.com/zentao/
-CAS_URL=https://sso.xxx.com/cas/login
-ZENTAO_USER=your_username
-ZENTAO_PASSWORD=your_password
+### 3. 接入 OpenAI Codex
+
+```bash
+npx ahs-zentao add codex
 ```
 
-## 接入 Claude Code
-
-1. 打开配置文件 `~/.claude/.mcp.json`（如果不存在则新建）
-
-2. 添加以下内容（将路径替换为你的实际安装路径）：
-
-```json
-{
-  "mcpServers": {
-    "zentao": {
-      "command": "node",
-      "args": ["/Users/你的用户名/zentao/dist/index.js"],
-      "cwd": "/Users/你的用户名/zentao"
-    }
-  }
-}
-```
-
-3. 重启 Claude Code（退出后重新打开），MCP Server 会自动加载
-
-4. 验证：在 Claude Code 中输入"查看我的 Bug"，如果返回 Bug 列表则接入成功
-
-## 接入 OpenAI Codex
-
-Codex 通过 `codex.json` 配置 MCP Server。
-
-1. 在项目根目录创建或编辑 `.codex/config.json`：
-
-```json
-{
-  "mcpServers": {
-    "zentao": {
-      "command": "node",
-      "args": ["/Users/你的用户名/zentao/dist/index.js"],
-      "cwd": "/Users/你的用户名/zentao"
-    }
-  }
-}
-```
-
-2. 重启 Codex CLI，MCP Server 会自动加载
+执行后会自动将 MCP Server 配置写入当前项目的 `.codex/config.json`，重启 Codex 即可使用。
 
 ## 使用示例
 
@@ -92,9 +52,19 @@ Codex 通过 `codex.json` 配置 MCP Server。
 - "解决 Bug #96035，备注：已修复登录判断逻辑"
 - "给 Bug #96035 添加备注：需要回归测试"
 
+## CLI 命令
+
+| 命令 | 说明 |
+|------|------|
+| `npx ahs-zentao init` | 交互式配置禅道账号信息 |
+| `npx ahs-zentao add claude` | 添加到 Claude Code |
+| `npx ahs-zentao add codex` | 添加到 OpenAI Codex |
+| `npx ahs-zentao serve` | 手动启动 MCP Server |
+| `npx ahs-zentao help` | 查看帮助 |
+
 ## 技术实现
 
 - **认证**：Playwright 驱动本机 Chrome 完成 CAS SSO 登录，提取 session cookie，后续 API 调用复用该 session
 - **读取操作**：通过禅道的 `.json` 后缀路由获取结构化数据（轻量 HTTP 请求）
 - **写入操作**：通过 Playwright 操作禅道表单页面提交（兼容 KindEditor 富文本和 chosen 下拉组件）
-- **Session 管理**：登录后 session 持久化到 `~/.zentao-session`，24 小时有效，过期自动重登
+- **Session 管理**：登录后 session 持久化到 `~/.ahs-zentao/session.json`，24 小时有效，过期自动重登
