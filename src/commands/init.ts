@@ -15,10 +15,10 @@ export async function initConfig(): Promise<void> {
 
   console.log("配置禅道 MCP Server 账号信息\n");
 
-  const zentaoUrl = await ask(rl, "禅道地址 (如 http://zentao.xxx.com/zentao/): ");
-  const casUrl = await ask(rl, "CAS 登录地址 (如 https://sso.xxx.com/cas/login): ");
-  const user = await ask(rl, "用户名: ");
-  const password = await ask(rl, "密码: ");
+  const zentaoUrl = await ask(rl, "禅道地址 (如 http://zentao.example.com/zentao/): ");
+  const casUrl = await ask(rl, "CAS 登录地址 (如 https://sso.example.com/cas/login): ");
+  const user = await ask(rl, "OB用户名: ");
+  const password = await ask(rl, "OB密码: ");
 
   rl.close();
 

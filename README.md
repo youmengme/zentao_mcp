@@ -25,7 +25,7 @@
 npx ahs-zentao init
 ```
 
-按提示输入禅道地址、CAS 地址、用户名和密码，配置会保存到 `~/.ahs-zentao/.env`。
+按提示输入禅道地址、CAS 地址、OA用户名和OA密码，配置会保存到 `~/.ahs-zentao/.env`。
 
 ### 2. 接入 Claude Code
 
