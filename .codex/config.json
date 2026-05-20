@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "zentao": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "ahs-zentao",
+        "serve"
+      ]
+    }
+  }
+}
