@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { execSync } from "child_process";
 import { homedir } from "os";
 import { join, dirname } from "path";
 
@@ -21,12 +22,35 @@ function writeJsonFile(path: string, data: unknown): void {
   writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
 }
 
-const serverEntry = {
-  command: "npx",
-  args: ["-y", "ahs-zentao", "serve"],
-};
+function installGlobally(): void {
+  console.log("正在全局安装 ahs-zentao...");
+  try {
+    execSync("npm install -g ahs-zentao --registry https://registry.npmjs.com", {
+      stdio: "inherit",
+    });
+  } catch {
+    console.log("⚠️  全局安装失败，将使用 npx 方式启动");
+  }
+}
+
+function isInstalledGlobally(): boolean {
+  try {
+    execSync("which ahs-zentao", { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export async function addToClient(client: "claude" | "codex"): Promise<void> {
+  if (!isInstalledGlobally()) {
+    installGlobally();
+  }
+
+  const serverEntry = isInstalledGlobally()
+    ? { command: "ahs-zentao", args: ["serve"] }
+    : { command: "npx", args: ["-y", "ahs-zentao", "serve"] };
+
   const configPath =
     client === "claude"
       ? join(homedir(), ".claude", ".mcp.json")
