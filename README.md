@@ -59,6 +59,7 @@ npx ahs-zentao add codex
 | `npx ahs-zentao init` | 交互式配置禅道账号信息 |
 | `npx ahs-zentao add claude` | 添加到 Claude Code |
 | `npx ahs-zentao add codex` | 添加到 OpenAI Codex |
+| `npx ahs-zentao update` | 检查并升级到最新版本 |
 | `npx ahs-zentao serve` | 手动启动 MCP Server |
 | `npx ahs-zentao help` | 查看帮助 |
 
