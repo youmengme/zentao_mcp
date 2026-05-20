@@ -1,6 +1,6 @@
 {
   "name": "ahs-zentao",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "MCP Server for ZenTao bug management with CAS SSO login",
   "type": "module",
   "bin": {
@@ -13,7 +13,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "release": "bash scripts/release.sh"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
