@@ -1,5 +1,6 @@
 import { config } from "../config.js";
 import { getOrRefreshSession, casLogin } from "../auth/cas-login.js";
+import { log } from "../debug.js";
 
 interface RequestOptions {
   method?: string;
@@ -22,6 +23,7 @@ export class ApiError extends Error {
 async function request(path: string, options: RequestOptions = {}): Promise<string> {
   const session = await getOrRefreshSession();
   const url = `${config.zentaoUrl}/${path.replace(/^\//, "")}`;
+  log("request:", options.method ?? "GET", url);
 
   const headers: Record<string, string> = {
     Cookie: `zentaosid=${session.zentaosid}`,
@@ -79,7 +81,8 @@ export async function getJson<T>(path: string): Promise<T> {
     }
     return wrapper as T;
   } catch {
-    throw new ApiError(500, `Invalid JSON response from ${path}`, text);
+    const preview = text.slice(0, 200);
+    throw new ApiError(500, `Invalid JSON response from ${path}: ${preview}`, text);
   }
 }
 

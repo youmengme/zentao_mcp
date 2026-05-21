@@ -2,6 +2,7 @@ import { getJson } from "./client.js";
 import { chromium } from "playwright-core";
 import { getOrRefreshSession } from "../auth/cas-login.js";
 import { config } from "../config.js";
+import { isDebug, log } from "../debug.js";
 
 export interface BugListItem {
   id: string;
@@ -89,7 +90,9 @@ export async function resolveBug(
   comment?: string,
 ): Promise<{ result: string }> {
   const session = await getOrRefreshSession();
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const headless = !isDebug();
+  log("resolveBug", { bugId, resolution, build, headless });
+  const browser = await chromium.launch({ channel: "chrome", headless });
 
   try {
     const context = await browser.newContext();

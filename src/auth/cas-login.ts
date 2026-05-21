@@ -1,6 +1,7 @@
 import { chromium, type Browser } from "playwright-core";
 import { config } from "../config.js";
 import { existsSync, readFileSync, writeFileSync } from "fs";
+import { isDebug, log } from "../debug.js";
 
 export interface Session {
   zentaosid: string;
@@ -25,18 +26,25 @@ export function saveSession(session: Session): void {
 }
 
 export async function casLogin(): Promise<Session> {
+  const headless = !isDebug();
+  log("casLogin start", { zentaoUrl: config.zentaoUrl, headless });
+
   let browser: Browser | undefined;
   try {
-    browser = await chromium.launch({ channel: "chrome", headless: true });
+    browser = await chromium.launch({ channel: "chrome", headless });
     const context = await browser.newContext();
     const page = await context.newPage();
 
     // Navigate to zentao — triggers CAS redirect
-    await page.goto(`${config.zentaoUrl}/my/`, { waitUntil: "networkidle" });
+    const entryUrl = `${config.zentaoUrl}/my/`;
+    log("navigating to", entryUrl);
+    await page.goto(entryUrl, { waitUntil: "networkidle" });
 
     // Check if CAS login page is shown
     const casUrl = page.url();
+    log("current url after navigation:", casUrl);
     if (casUrl.includes("sso.aihuishou.com/cas/login")) {
+      log("CAS login page detected, filling credentials");
       await page.fill("#username", config.username);
       await page.fill("#password", config.password);
       await page.click('button[name="submitBtn"]');
@@ -44,6 +52,7 @@ export async function casLogin(): Promise<Session> {
       // Wait for redirect back to zentao
       await page.waitForURL(/zentao/, { timeout: 15000 });
       await page.waitForLoadState("networkidle");
+      log("redirected back to zentao:", page.url());
     }
 
     // Extract zentaosid cookie
