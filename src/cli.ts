@@ -1,8 +1,6 @@
 #!/usr/bin/env node
 
-import { homedir } from "os";
-import { join } from "path";
-import { addToClient } from "./commands/add.js";
+import { addToClient, SUPPORTED_CLIENTS } from "./commands/add.js";
 import { initConfig } from "./commands/init.js";
 import { update } from "./commands/update.js";
 
@@ -12,11 +10,12 @@ const command = args[0];
 switch (command) {
   case "add": {
     const client = args[1];
-    if (!client || !["claude", "codex"].includes(client)) {
-      console.log("Usage: ahs-zentao add <claude|codex>");
+    if (!client || !SUPPORTED_CLIENTS.includes(client)) {
+      console.log(`Usage: ahs-zentao add <${SUPPORTED_CLIENTS.join("|")}> [-g]`);
       process.exit(1);
     }
-    await addToClient(client as "claude" | "codex");
+    const local = !args.includes("-g");
+    await addToClient(client, local);
     break;
   }
   case "init":
@@ -44,15 +43,16 @@ switch (command) {
     console.log(`ahs-zentao - 禅道 MCP Server
 
 Commands:
-  add claude    添加到 Claude Code
-  add codex     添加到 OpenAI Codex
-  init          配置禅道账号信息
-  update        检查并升级到最新版本
-  serve         启动 MCP Server
+  add <client> [-g]  添加到 AI 客户端 (支持: ${SUPPORTED_CLIENTS.join(", ")})
+                     -g 安装到全局配置，不加则安装到当前项目
+  init               配置禅道账号信息
+  update             检查并升级到最新版本
+  serve              启动 MCP Server
 
 Examples:
-  npx ahs-zentao add claude
+  npx ahs-zentao add claude -g    全局添加到 Claude Code
+  npx ahs-zentao add codex -g     全局添加到 OpenAI Codex
+  npx ahs-zentao add cursor       添加到当前项目的 Cursor 配置
   npx ahs-zentao init
-  npx ahs-zentao update
 `);
 }

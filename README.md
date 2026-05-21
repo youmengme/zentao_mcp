@@ -1,6 +1,6 @@
 # ahs-zentao
 
-禅道 Bug 管理系统的 MCP Server，通过 Playwright 自动化 CAS SSO 登录，为 Claude Code / Codex 提供禅道操作能力。
+禅道 Bug 管理系统的 MCP Server，通过 Playwright 自动化 CAS SSO 登录，为 AI 编程工具提供禅道操作能力。
 
 ## 功能
 
@@ -27,21 +27,25 @@ npx ahs-zentao init
 
 按提示输入禅道地址、CAS 地址、OA用户名和OA密码，配置会保存到 `~/.ahs-zentao/.env`。
 
-### 2. 接入 Claude Code
+### 2. 添加到 AI 客户端
+
+支持的客户端：`claude`、`codex`、`cursor`、`windsurf`、`gemini`
+
+**全局安装**（推荐，所有项目可用）：
+
+```bash
+npx ahs-zentao add claude -g
+npx ahs-zentao add codex -g
+```
+
+**项目级安装**（仅当前项目生效）：
 
 ```bash
 npx ahs-zentao add claude
+npx ahs-zentao add cursor
 ```
 
-执行后会自动将 MCP Server 配置写入 `~/.claude/.mcp.json`，重启 Claude Code 即可使用。
-
-### 3. 接入 OpenAI Codex
-
-```bash
-npx ahs-zentao add codex
-```
-
-执行后会自动将 MCP Server 配置写入当前项目的 `.codex/config.json`，重启 Codex 即可使用。
+安装完成后重启对应客户端即可使用。
 
 ## 使用示例
 
@@ -57,11 +61,13 @@ npx ahs-zentao add codex
 | 命令 | 说明 |
 |------|------|
 | `npx ahs-zentao init` | 交互式配置禅道账号信息 |
-| `npx ahs-zentao add claude` | 添加到 Claude Code |
-| `npx ahs-zentao add codex` | 添加到 OpenAI Codex |
+| `npx ahs-zentao add <client> -g` | 全局添加到 AI 客户端 |
+| `npx ahs-zentao add <client>` | 添加到当前项目 |
 | `npx ahs-zentao update` | 检查并升级到最新版本 |
 | `npx ahs-zentao serve` | 手动启动 MCP Server |
 | `npx ahs-zentao help` | 查看帮助 |
+
+支持的客户端：`claude`、`codex`、`cursor`、`windsurf`、`gemini`
 
 ## 技术实现
 

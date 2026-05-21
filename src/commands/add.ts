@@ -1,74 +1,49 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
-import { execSync } from "child_process";
+import { existsSync } from "fs";
+import { spawnSync } from "child_process";
 import { homedir } from "os";
-import { join, dirname } from "path";
+import { join } from "path";
 
-interface McpConfig {
-  mcpServers?: Record<string, { command: string; args: string[] }>;
-}
+const CLIENT_MAP: Record<string, string> = {
+  claude: "claude-code",
+  codex: "codex",
+  cursor: "cursor",
+  windsurf: "windsurf",
+  gemini: "gemini-cli",
+};
 
-function readJsonFile(path: string): McpConfig {
-  if (!existsSync(path)) return {};
-  try {
-    return JSON.parse(readFileSync(path, "utf-8"));
-  } catch {
-    return {};
-  }
-}
+export const SUPPORTED_CLIENTS = Object.keys(CLIENT_MAP);
 
-function writeJsonFile(path: string, data: unknown): void {
-  const dir = dirname(path);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
-}
-
-function installGlobally(): void {
-  console.log("正在全局安装 ahs-zentao...");
-  try {
-    execSync("npm install -g ahs-zentao --registry https://registry.npmjs.com", {
-      stdio: "inherit",
-    });
-  } catch {
-    console.log("⚠️  全局安装失败，将使用 npx 方式启动");
-  }
-}
-
-function isInstalledGlobally(): boolean {
-  try {
-    execSync("which ahs-zentao", { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export async function addToClient(client: "claude" | "codex"): Promise<void> {
-  if (!isInstalledGlobally()) {
-    installGlobally();
+export async function addToClient(client: string, local = false): Promise<void> {
+  const installMcpClient = CLIENT_MAP[client];
+  if (!installMcpClient) {
+    console.log(`不支持的客户端: ${client}`);
+    console.log(`支持的客户端: ${SUPPORTED_CLIENTS.join(", ")}`);
+    process.exit(1);
   }
 
-  const serverEntry = isInstalledGlobally()
-    ? { command: "ahs-zentao", args: ["serve"] }
-    : { command: "npx", args: ["-y", "ahs-zentao", "serve"] };
+  const args = [
+    "-y", "install-mcp@latest",
+    "ahs-zentao serve",
+    "--client", installMcpClient,
+    "--name", "zentao",
+    "-y",
+  ];
+  if (local) {
+    args.push("--local");
+  }
 
-  const configPath =
-    client === "claude"
-      ? join(homedir(), ".claude", ".mcp.json")
-      : join(process.cwd(), ".codex", "config.json");
+  console.log(`正在添加 zentao MCP Server 到 ${installMcpClient}${local ? " (本地)" : " (全局)"}...`);
 
-  const config = readJsonFile(configPath);
-  if (!config.mcpServers) config.mcpServers = {};
-  config.mcpServers.zentao = serverEntry;
-  writeJsonFile(configPath, config);
-
-  console.log(`✅ 已添加 zentao MCP Server 到 ${configPath}`);
-  console.log("");
+  const result = spawnSync("npx", args, { stdio: "inherit" });
+  if (result.status !== 0) {
+    console.log("❌ 添加失败，请检查 install-mcp 是否可用");
+    process.exit(1);
+  }
 
   const globalEnv = join(homedir(), ".ahs-zentao", ".env");
   if (!existsSync(globalEnv)) {
+    console.log("");
     console.log("⚠️  尚未配置禅道账号，请运行：");
     console.log("   npx ahs-zentao init");
-  } else {
-    console.log("🎉 配置完成，重启 " + (client === "claude" ? "Claude Code" : "Codex") + " 即可使用");
   }
 }
