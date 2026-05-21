@@ -1,10 +1,10 @@
 {
   "name": "ahs-zentao",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "MCP Server for ZenTao bug management with CAS SSO login",
   "type": "module",
   "bin": {
-    "ahs-zentao": "./dist/cli.js"
+    "ahs-zentao": "dist/cli.js"
   },
   "files": [
     "dist",
