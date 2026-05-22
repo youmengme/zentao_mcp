@@ -49,8 +49,12 @@ export async function casLogin(): Promise<Session> {
       await page.fill("#password", config.password);
       await page.click('button[name="submitBtn"]');
 
-      // Wait for redirect back to zentao
-      await page.waitForURL(/zentao/, { timeout: 15000 });
+      // Wait for redirect back to zentao (must be on the actual zentao host, not CAS service param)
+      const zentaoHost = new URL(config.zentaoUrl).hostname;
+      await page.waitForURL(
+        (url) => url.hostname === zentaoHost && !url.pathname.includes("/cas/"),
+        { timeout: 15000 },
+      );
       await page.waitForLoadState("networkidle");
       log("redirected back to zentao:", page.url());
     }
@@ -63,12 +67,25 @@ export async function casLogin(): Promise<Session> {
       throw new Error("Login succeeded but zentaosid cookie not found");
     }
 
+    // Verify the session is actually authenticated (not an anonymous SID)
+    const verifyResp = await fetch(`${config.zentaoUrl}/my/`, {
+      headers: { Cookie: `zentaosid=${sid.value}` },
+      redirect: "manual",
+    });
+    if (verifyResp.status === 302) {
+      const loc = verifyResp.headers.get("location") ?? "";
+      if (loc.includes("cas/login")) {
+        throw new Error("CAS login appeared to succeed but session is not authenticated (got anonymous SID)");
+      }
+    }
+
     const session: Session = {
       zentaosid: sid.value,
       expiresAt: Date.now() + SESSION_TTL,
     };
 
     saveSession(session);
+    log("session saved, zentaosid length:", sid.value.length);
     return session;
   } finally {
     await browser?.close();
