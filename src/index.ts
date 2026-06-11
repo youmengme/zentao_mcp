@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { casLogin, loadSession } from "./auth/cas-login.js";
-import { listBugs, getBug, resolveBug } from "./api/bug.js";
+import { listBugs, getBug, resolveBug, getMyBugs } from "./api/bug.js";
 import { addComment } from "./api/comment.js";
 
 const server = new McpServer({
@@ -60,6 +60,38 @@ server.tool(
       .join("\n\n");
 
     return { content: [{ type: "text", text }] };
+  },
+);
+
+// ---------- Tool: My Bugs ----------
+
+server.tool(
+  "zentao_my_bugs",
+  "Get bugs related to the current logged-in user (我的地盘-我的Bug). Defaults to bugs assigned to me.",
+  {
+    type: z
+      .enum(["assignedTo", "openedBy", "resolvedBy"])
+      .optional()
+      .default("assignedTo")
+      .describe("Which set of my bugs: assignedTo(指派给我), openedBy(由我创建), resolvedBy(由我解决)"),
+    limit: z.number().optional().default(50).describe("Max number of bugs to return"),
+  },
+  async ({ type, limit }) => {
+    await loadSession() || await casLogin();
+
+    const bugs = await getMyBugs(type, limit);
+    if (bugs.length === 0) {
+      return { content: [{ type: "text", text: "No bugs found." }] };
+    }
+
+    const text = bugs
+      .map(
+        (b) =>
+          `#${b.id} [${b.status}] P${b.pri} S${b.severity} — ${b.title}\n  Assigned: ${b.assignedTo} | Opened: ${b.openedBy} ${b.openedDate}`,
+      )
+      .join("\n\n");
+
+    return { content: [{ type: "text", text: `${bugs.length} bug(s):\n\n${text}` }] };
   },
 );
 

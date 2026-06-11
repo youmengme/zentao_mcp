@@ -39,8 +39,30 @@ interface BugBrowseResponse {
   pager: unknown;
 }
 
+interface MyBugResponse {
+  title: string;
+  bugs: BugListItem[];
+}
+
 interface BugViewResponse {
   bug: BugDetail;
+}
+
+/**
+ * "我的地盘-我的Bug" — bugs related to the current logged-in user.
+ * type:
+ *   assignedTo — 指派给我 (default)
+ *   openedBy   — 由我创建
+ *   resolvedBy — 由我解决
+ */
+export async function getMyBugs(
+  type: "assignedTo" | "openedBy" | "resolvedBy" = "assignedTo",
+  limit?: number,
+): Promise<BugListItem[]> {
+  const data = await getJson<MyBugResponse>(`my-bug-${type}.json`);
+  let bugs = data.bugs ?? [];
+  if (limit) bugs = bugs.slice(0, limit);
+  return bugs;
 }
 
 export async function listBugs(params: {
