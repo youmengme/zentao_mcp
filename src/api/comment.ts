@@ -1,6 +1,7 @@
 import { chromium } from "playwright-core";
 import { getOrRefreshSession } from "../auth/cas-login.js";
 import { config } from "../config.js";
+import { textToHtml } from "../html.js";
 
 export async function addComment(
   bugId: number,
@@ -33,7 +34,7 @@ export async function addComment(
       const last = ke.instances[keys[keys.length - 1]];
       last.html(text);
       last.sync();
-    }, `<p>${comment}</p>`);
+    }, textToHtml(comment));
 
     await page.click('button[type="submit"], #submit');
     await page.waitForURL(/bug-view/, { timeout: 10000 }).catch(() => {});

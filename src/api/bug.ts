@@ -3,6 +3,7 @@ import { chromium } from "playwright-core";
 import { getOrRefreshSession } from "../auth/cas-login.js";
 import { config } from "../config.js";
 import { isDebug, log } from "../debug.js";
+import { textToHtml } from "../html.js";
 
 export interface BugListItem {
   id: string;
@@ -125,8 +126,9 @@ export async function resolveBug(
     const page = await context.newPage();
     await page.goto(`${config.zentaoUrl}/bug-resolve-${bugId}.html?onlybody=yes`, { waitUntil: "networkidle" });
 
+    const commentHtml = comment ? textToHtml(comment) : "";
     await page.evaluate(
-      ({ resolution, build, comment }) => {
+      ({ resolution, build, commentHtml }) => {
         const resSelect = document.querySelector("#resolution") as HTMLSelectElement;
         if (resSelect) {
           resSelect.value = resolution;
@@ -136,17 +138,17 @@ export async function resolveBug(
         const buildSelect = document.querySelector("#resolvedBuild") as HTMLSelectElement;
         if (buildSelect) buildSelect.value = build;
 
-        if (comment) {
+        if (commentHtml) {
           const ke = (window as any).KindEditor;
           if (ke) {
             const keys = Object.keys(ke.instances);
             const editor = ke.instances[keys[keys.length - 1]];
-            editor.html(`<p>${comment}</p>`);
+            editor.html(commentHtml);
             editor.sync();
           }
         }
       },
-      { resolution, build, comment },
+      { resolution, build, commentHtml },
     );
 
     await page.click("#submit");

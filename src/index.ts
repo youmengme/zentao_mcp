@@ -136,7 +136,7 @@ server.tool(
       .default("fixed")
       .describe("Resolution type: fixed(已解决), bydesign(设计如此), data(数据原因), duplicate(重复Bug), external(外部原因), notrepro(无法重现), postponed(延期处理), willnotfix(不予解决), c2b(C端问题), xuqiu(转为需求), bushiwenti(不是问题), config(配置问题), prodbug(线上问题)"),
     build: z.string().optional().default("trunk").describe("Build version (default: trunk/主干)"),
-    comment: z.string().optional().describe("Comment/备注: describe what was fixed, impact, and side effects"),
+    comment: z.string().optional().describe("备注(给测试人员看,非代码细节): 用通俗语言说明本次修改的影响范围、测试时需要重点回归/关注的功能点。面向测试视角,不要罗列代码改动。支持多行,空行分段、单换行会转为 <br/>。"),
   },
   async ({ bugId, resolution, build, comment }) => {
     await loadSession() || await casLogin();
@@ -155,7 +155,7 @@ server.tool(
   "Add a comment to a bug in ZenTao.",
   {
     bugId: z.number().describe("Bug ID to comment on"),
-    content: z.string().describe("Comment content"),
+    content: z.string().describe("Comment content. 支持多行: 空行分段, 单个换行会转为 <br/>。"),
   },
   async ({ bugId, content }) => {
     await loadSession() || await casLogin();
