@@ -33,9 +33,10 @@ async function request(path: string, options: RequestOptions = {}): Promise<stri
   let body: string | undefined;
   if (options.body) {
     headers["Content-Type"] = "application/x-www-form-urlencoded";
-    body = new URLSearchParams(
-      options.body as Record<string, string>,
-    ).toString();
+    // ZenTao guards write actions with a Referer same-origin check; without it
+    // POSTs are bounced to the login/deny page.
+    headers["Referer"] = `${config.zentaoUrl}/`;
+    body = encodeForm(options.body);
   }
 
   const resp = await fetch(url, {
@@ -86,12 +87,60 @@ export async function getJson<T>(path: string): Promise<T> {
   }
 }
 
-export async function postForm<T>(path: string, body: Record<string, unknown>): Promise<T> {
-  const text = await request(path, { method: "POST", body });
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    // Some zentao actions return HTML redirect on success
-    return { result: "success" } as T;
+/**
+ * Serialize a form body into application/x-www-form-urlencoded.
+ * Array values are appended once per item (e.g. `openedBuild[]=a&openedBuild[]=b`),
+ * which is how ZenTao expects multi-value fields. Null/undefined are skipped.
+ */
+function encodeForm(body: Record<string, unknown>): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(body)) {
+    if (value === undefined || value === null) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) params.append(key, String(item));
+    } else {
+      params.append(key, String(value));
+    }
   }
+  return params.toString();
+}
+
+/**
+ * POST a ZenTao write action and interpret its response.
+ *
+ * ZenTao wraps action results as `{status:"success", data:"<json string>"}`,
+ * where the inner JSON is `{result:"success"|"fail", message, locate}`. A plain
+ * `{locate:...}` (or an HTML redirect with no JSON) also means success. We throw
+ * an ApiError carrying the field messages when the inner result is "fail".
+ */
+export async function postAction(path: string, body: Record<string, unknown>): Promise<void> {
+  const text = await request(path, { method: "POST", body });
+
+  let inner: { result?: string; message?: unknown; locate?: unknown };
+  try {
+    const wrapper = JSON.parse(text);
+    inner =
+      wrapper.status === "success" && typeof wrapper.data === "string"
+        ? JSON.parse(wrapper.data)
+        : wrapper;
+  } catch {
+    // Non-JSON body (HTML redirect) — ZenTao treats this as success.
+    return;
+  }
+
+  if (inner.result === "fail") {
+    throw new ApiError(422, `ZenTao rejected the request: ${formatMessage(inner.message)}`, text);
+  }
+}
+
+/** Flatten ZenTao's `message` (string | string[] | {field: string[]}) to one line. */
+function formatMessage(message: unknown): string {
+  if (typeof message === "string") return message;
+  if (Array.isArray(message)) return message.join("; ");
+  if (message && typeof message === "object") {
+    return Object.entries(message as Record<string, unknown>)
+      .map(([field, msgs]) => `${field}: ${Array.isArray(msgs) ? msgs.join(",") : String(msgs)}`)
+      .join("; ");
+  }
+  return "unknown error";
 }

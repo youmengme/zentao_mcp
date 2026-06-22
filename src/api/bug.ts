@@ -1,8 +1,5 @@
-import { getJson } from "./client.js";
-import { chromium } from "playwright-core";
-import { getOrRefreshSession } from "../auth/cas-login.js";
-import { config } from "../config.js";
-import { isDebug, log } from "../debug.js";
+import { getJson, postAction } from "./client.js";
+import { log } from "../debug.js";
 import { textToHtml } from "../html.js";
 
 export interface BugListItem {
@@ -24,11 +21,18 @@ export interface BugDetail extends BugListItem {
   product: string;
   module: string;
   project: string;
+  branch: string;
+  plan: string;
+  story: string;
+  task: string;
   os: string;
   browser: string;
+  keywords: string;
   deadline: string;
   openedBuild: string;
+  resolvedBuild: string;
   resolvedDate: string;
+  duplicateBug: string;
   closedBy: string;
   closedDate: string;
   lastEditedBy: string;
@@ -106,56 +110,28 @@ export async function getBug(bugId: number): Promise<BugDetail> {
   return data.bug;
 }
 
+/**
+ * Resolve a bug via a plain HTTP POST (no browser needed).
+ *
+ * ZenTao's bug->resolve only writes the fields we post (resolvedBy/resolvedDate/
+ * assignedTo default server-side), so a minimal payload is safe. We must NOT send
+ * `createBuild`, or ZenTao tries to create a new build and demands buildName.
+ * The `comment` is recorded in the bug's action history.
+ */
 export async function resolveBug(
   bugId: number,
   resolution: string = "fixed",
   build: string = "trunk",
   comment?: string,
 ): Promise<{ result: string }> {
-  const session = await getOrRefreshSession();
-  const headless = !isDebug();
-  log("resolveBug", { bugId, resolution, build, headless });
-  const browser = await chromium.launch({ channel: "chrome", headless });
+  log("resolveBug", { bugId, resolution, build });
 
-  try {
-    const context = await browser.newContext();
-    await context.addCookies([
-      { name: "zentaosid", value: session.zentaosid, domain: new URL(config.zentaoUrl).hostname, path: "/" },
-    ]);
+  const body: Record<string, unknown> = {
+    resolution,
+    resolvedBuild: build,
+  };
+  if (comment) body.comment = textToHtml(comment);
 
-    const page = await context.newPage();
-    await page.goto(`${config.zentaoUrl}/bug-resolve-${bugId}.html?onlybody=yes`, { waitUntil: "networkidle" });
-
-    const commentHtml = comment ? textToHtml(comment) : "";
-    await page.evaluate(
-      ({ resolution, build, commentHtml }) => {
-        const resSelect = document.querySelector("#resolution") as HTMLSelectElement;
-        if (resSelect) {
-          resSelect.value = resolution;
-          resSelect.dispatchEvent(new Event("change", { bubbles: true }));
-        }
-
-        const buildSelect = document.querySelector("#resolvedBuild") as HTMLSelectElement;
-        if (buildSelect) buildSelect.value = build;
-
-        if (commentHtml) {
-          const ke = (window as any).KindEditor;
-          if (ke) {
-            const keys = Object.keys(ke.instances);
-            const editor = ke.instances[keys[keys.length - 1]];
-            editor.html(commentHtml);
-            editor.sync();
-          }
-        }
-      },
-      { resolution, build, commentHtml },
-    );
-
-    await page.click("#submit");
-    await page.waitForTimeout(3000);
-
-    return { result: "success" };
-  } finally {
-    await browser.close();
-  }
+  await postAction(`bug-resolve-${bugId}.json`, body);
+  return { result: "success" };
 }
