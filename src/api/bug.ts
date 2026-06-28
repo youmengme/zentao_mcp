@@ -1,4 +1,4 @@
-import { getJson, postAction } from "./client.js";
+import { getJson, postAction, getBinary } from "./client.js";
 import { log } from "../debug.js";
 import { textToHtml } from "../html.js";
 
@@ -16,8 +16,20 @@ export interface BugListItem {
   resolution: string;
 }
 
+/** An image embedded in a bug's steps/comments or attached to it. */
+export interface BugImageRef {
+  fileId: number;
+  filename: string; // e.g. "134868.png"
+  url: string; // download path, e.g. "file-read-134868.png"
+  source: "steps" | "comment" | "attachment";
+}
+
 export interface BugDetail extends BugListItem {
   steps: string;
+  /** Image references gathered from steps, comment history, and attachments. */
+  images: BugImageRef[];
+  /** Raw ZenTao attachment list (shape varies); parsed into `images`. */
+  files?: unknown;
   product: string;
   module: string;
   project: string;
@@ -51,6 +63,53 @@ interface MyBugResponse {
 
 interface BugViewResponse {
   bug: BugDetail;
+  /** Action/comment history — array or id-keyed object depending on ZenTao build. */
+  actions?: unknown;
+}
+
+const IMAGE_EXT = /^(png|jpe?g|gif|webp|bmp|svg)$/i;
+
+/** Pull `file-read-<id>.<ext>` image references out of a chunk of ZenTao HTML. */
+function extractInlineImages(html: string | undefined, source: BugImageRef["source"]): BugImageRef[] {
+  if (!html) return [];
+  const refs: BugImageRef[] = [];
+  const re = /file-read-(\d+)\.([a-z0-9]+)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    if (!IMAGE_EXT.test(m[2])) continue;
+    const filename = `${m[1]}.${m[2]}`;
+    refs.push({ fileId: Number(m[1]), filename, url: `file-read-${filename}`, source });
+  }
+  return refs;
+}
+
+function toList(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === "object") return Object.values(value as Record<string, unknown>);
+  return [];
+}
+
+/**
+ * Collect every image tied to a bug: inline images in the steps, inline images
+ * in comment history, and explicit file attachments. KindEditor-embedded images
+ * never show up in `bug.files`, so the inline scan is the main source; the
+ * attachment list adds screenshots uploaded as files. Deduped by fileId.
+ */
+function collectImages(bug: BugDetail, actions: unknown): BugImageRef[] {
+  const refs: BugImageRef[] = [...extractInlineImages(bug.steps, "steps")];
+
+  for (const a of toList(actions) as Array<{ comment?: string }>) {
+    refs.push(...extractInlineImages(a?.comment, "comment"));
+  }
+
+  for (const f of toList(bug.files) as Array<{ id?: number | string; extension?: string }>) {
+    if (f?.id == null || !f.extension || !IMAGE_EXT.test(f.extension)) continue;
+    const filename = `${f.id}.${f.extension.toLowerCase()}`;
+    refs.push({ fileId: Number(f.id), filename, url: `file-read-${filename}`, source: "attachment" });
+  }
+
+  const seen = new Set<number>();
+  return refs.filter((r) => (seen.has(r.fileId) ? false : seen.add(r.fileId) && true));
 }
 
 /**
@@ -107,7 +166,42 @@ export async function listBugs(params: {
 
 export async function getBug(bugId: number): Promise<BugDetail> {
   const data = await getJson<BugViewResponse>(`bug-view-${bugId}.json`);
-  return data.bug;
+  const bug = data.bug;
+  bug.images = collectImages(bug, data.actions);
+  return bug;
+}
+
+const MIME_BY_EXT: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  bmp: "image/bmp",
+  svg: "image/svg+xml",
+};
+
+/**
+ * Download one image belonging to a bug. The fileId comes from getBug()'s
+ * `images` list; we re-resolve it there to validate ownership and recover the
+ * filename/extension, then fetch the bytes with the session cookie.
+ */
+export async function getBugImage(
+  bugId: number,
+  fileId: number,
+): Promise<{ data: Buffer; mimeType: string; filename: string }> {
+  log("getBugImage", { bugId, fileId });
+  const bug = await getBug(bugId);
+  const ref = bug.images.find((i) => i.fileId === fileId);
+  if (!ref) {
+    const available = bug.images.map((i) => i.fileId).join(", ") || "none";
+    throw new Error(`Bug #${bugId} has no image with fileId ${fileId} (available: ${available})`);
+  }
+
+  const { data, contentType } = await getBinary(ref.url);
+  const ext = ref.filename.split(".").pop()?.toLowerCase() ?? "";
+  const mimeType = contentType.startsWith("image/") ? contentType : MIME_BY_EXT[ext] ?? "application/octet-stream";
+  return { data, mimeType, filename: ref.filename };
 }
 
 /**

@@ -73,6 +73,35 @@ async function request(path: string, options: RequestOptions = {}): Promise<stri
   return resp.text();
 }
 
+/**
+ * Download a binary resource (e.g. an uploaded image) with the session cookie.
+ * Mirrors request()'s 302→re-login retry, but returns raw bytes instead of text
+ * so callers can hand the buffer to an MCP image content block.
+ */
+export async function getBinary(path: string): Promise<{ data: Buffer; contentType: string }> {
+  const session = await getOrRefreshSession();
+  const url = `${config.zentaoUrl}/${path.replace(/^\//, "")}`;
+  log("getBinary:", url);
+
+  const fetchOnce = (sid: string) =>
+    fetch(url, { headers: { Cookie: `zentaosid=${sid}` }, redirect: "manual" });
+
+  let resp = await fetchOnce(session.zentaosid);
+  if (resp.status === 401 || resp.status === 302) {
+    const location = resp.headers.get("location") ?? "";
+    if (resp.status === 401 || location.includes("cas/login")) {
+      const fresh = await casLogin();
+      resp = await fetchOnce(fresh.zentaosid);
+    }
+  }
+  if (!resp.ok) {
+    throw new ApiError(resp.status, `Failed to download ${path}: ${resp.statusText}`);
+  }
+  const contentType = resp.headers.get("content-type") ?? "application/octet-stream";
+  const data = Buffer.from(await resp.arrayBuffer());
+  return { data, contentType };
+}
+
 export async function getJson<T>(path: string): Promise<T> {
   const text = await request(path);
   try {

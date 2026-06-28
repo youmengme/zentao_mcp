@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { casLogin, loadSession } from "./auth/cas-login.js";
-import { listBugs, getBug, resolveBug, getMyBugs } from "./api/bug.js";
+import { listBugs, getBug, getBugImage, resolveBug, getMyBugs } from "./api/bug.js";
 import { addComment } from "./api/comment.js";
 
 const server = new McpServer({
@@ -119,7 +119,37 @@ server.tool(
       bug.steps,
     ].filter(Boolean);
 
+    if (bug.images.length > 0) {
+      lines.push(`--- 图片附件 (${bug.images.length}) ---`);
+      for (const img of bug.images) {
+        lines.push(`  - fileId=${img.fileId}  ${img.filename}  (来源: ${img.source})`);
+      }
+      lines.push(`提示: 用 zentao_get_bug_image(bugId=${bug.id}, fileId=...) 读取图片内容。`);
+    }
+
     return { content: [{ type: "text", text: lines.join("\n") }] };
+  },
+);
+
+// ---------- Tool: Get Bug Image ----------
+
+server.tool(
+  "zentao_get_bug_image",
+  "Download and view an image embedded in or attached to a bug. Use a fileId from the image attachment list returned by zentao_get_bug.",
+  {
+    bugId: z.number().describe("Bug ID the image belongs to"),
+    fileId: z.number().describe("Image fileId from the bug's attachment list (e.g. 134868)"),
+  },
+  async ({ bugId, fileId }) => {
+    await loadSession() || await casLogin();
+
+    const { data, mimeType, filename } = await getBugImage(bugId, fileId);
+    return {
+      content: [
+        { type: "text", text: `${filename} (${mimeType}, ${data.length} bytes)` },
+        { type: "image", data: data.toString("base64"), mimeType },
+      ],
+    };
   },
 );
 
