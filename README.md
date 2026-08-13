@@ -1,6 +1,6 @@
 # ahs-zentao
 
-禅道 Bug 管理系统的 MCP Server，通过纯 HTTP 完成 CAS SSO 登录与读写操作，无需浏览器，为 AI 编程工具提供禅道操作能力。
+禅道 Bug 管理系统的 MCP Server，通过 Playwright 自动化 CAS SSO 登录，为 AI 编程工具提供禅道操作能力。
 
 ## 功能
 
@@ -14,7 +14,8 @@
 
 ## 前置条件
 
-- Node.js 18+（使用内置 fetch，无需浏览器）
+- Node.js 18+
+- 本机已安装 Google Chrome
 - 禅道 12.x 专业版（已验证 12.5.3，理论上 12.0+ 均可）
 - 禅道接入 CAS SSO 登录
 
@@ -73,8 +74,8 @@ npx ahs-zentao add cursor
 
 ## 技术实现
 
-- **认证**：纯 HTTP 完成 CAS SSO 登录——手动维护 cookie jar 并跟随重定向链，提交凭据换取 service ticket，由禅道校验后颁发 `zentaosid`，无需浏览器
+- **认证**：Playwright 驱动本机 Chrome 完成 CAS SSO 登录，提取 session cookie，后续 API 调用复用该 session
 - **读取操作**：通过禅道的 `.json` 后缀路由获取结构化数据（轻量 HTTP 请求）
-- **写入操作**：直接 HTTP POST 到禅道表单接口（`bug-resolve` / `bug-edit`），带 `Referer` 过同源校验，富文本字段转为 HTML 提交
+- **写入操作**：通过 Playwright 操作禅道表单页面提交（兼容 KindEditor 富文本和 chosen 下拉组件）
 - **图片读取**：解析正文/评论/附件中的 `file-read-<id>` 引用，按需带 session 下载图片字节，以 MCP image 内容块返回
 - **Session 管理**：登录后 session 持久化到 `~/.ahs-zentao/session.json`，24 小时有效，过期自动重登
