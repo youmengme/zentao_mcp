@@ -5,6 +5,8 @@ import { InteractiveLoginManager } from "../dist/auth/interactive-login.js";
 function harness({ sid, verified = true } = {}) {
   let opened = 0;
   let closed = 0;
+  let verifiedCount = 0;
+  let savedCount = 0;
   let saved;
   let timeoutCallback;
   let closedCallback;
@@ -18,8 +20,8 @@ function harness({ sid, verified = true } = {}) {
         onClosed: (callback) => { closedCallback = callback; },
       };
     },
-    verifySession: async () => verified,
-    saveSession: (session) => { saved = session; },
+    verifySession: async () => { verifiedCount += 1; return verified; },
+    saveSession: (session) => { savedCount += 1; saved = session; },
     now: () => 1_000,
     schedule: (callback) => { timeoutCallback = callback; return 1; },
     cancel: () => {},
@@ -28,6 +30,7 @@ function harness({ sid, verified = true } = {}) {
   return {
     manager,
     counts: () => ({ opened, closed }),
+    completionCounts: () => ({ verified: verifiedCount, saved: savedCount }),
     saved: () => saved,
     expire: async () => { await timeoutCallback(); },
     closeFromBrowser: async () => { await closedCallback(); },
@@ -79,4 +82,17 @@ test("clears state when the user closes the browser", async () => {
   await h.manager.start();
   await h.closeFromBrowser();
   assert.equal(h.manager.isPending(), false);
+});
+
+test("serializes concurrent completion requests", async () => {
+  const h = harness({ sid: "sid-1" });
+  await h.manager.start();
+  const results = await Promise.all([
+    h.manager.finish(),
+    h.manager.finish(),
+  ]);
+
+  assert.deepEqual(results, [{ status: "success" }, { status: "success" }]);
+  assert.deepEqual(h.completionCounts(), { verified: 1, saved: 1 });
+  assert.deepEqual(h.counts(), { opened: 1, closed: 1 });
 });

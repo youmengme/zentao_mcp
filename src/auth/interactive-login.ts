@@ -37,6 +37,7 @@ const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 export class InteractiveLoginManager {
   private window: InteractiveWindow | undefined;
   private starting: Promise<void> | undefined;
+  private finishing: Promise<FinishLoginResult> | undefined;
   private timer: unknown;
 
   constructor(private readonly deps: InteractiveLoginDependencies) {}
@@ -65,7 +66,16 @@ export class InteractiveLoginManager {
     );
   }
 
-  async finish(): Promise<FinishLoginResult> {
+  finish(): Promise<FinishLoginResult> {
+    if (!this.finishing) {
+      this.finishing = this.complete().finally(() => {
+        this.finishing = undefined;
+      });
+    }
+    return this.finishing;
+  }
+
+  private async complete(): Promise<FinishLoginResult> {
     if (this.starting) await this.starting;
     const opened = this.window;
     if (!opened) return { status: "missing" };
@@ -101,6 +111,7 @@ export class InteractiveLoginManager {
         return;
       }
     }
+    if (this.finishing) await this.finishing;
     await this.cleanup();
   }
 
