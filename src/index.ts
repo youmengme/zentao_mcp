@@ -3,14 +3,23 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { casLogin, loadSession } from "./auth/cas-login.js";
+import {
+  casLogin,
+  finishInteractiveLogin,
+  loadSession,
+} from "./auth/cas-login.js";
 import { listBugs, getBug, getBugImage, resolveBug, getMyBugs } from "./api/bug.js";
 import { addComment } from "./api/comment.js";
+import { runAuthenticated } from "./auth/tool-auth.js";
 
 const server = new McpServer({
   name: "zentao",
   version: "0.1.0",
 });
+
+async function ensureSession() {
+  return (await loadSession()) ?? casLogin();
+}
 
 // ---------- Tool: Login ----------
 
@@ -19,15 +28,62 @@ server.tool(
   "Login to ZenTao via CAS SSO. Returns session status.",
   {},
   async () => {
-    const session = await casLogin();
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Login successful. Session expires at ${new Date(session.expiresAt).toISOString()}`,
-        },
-      ],
-    };
+    return runAuthenticated(
+      async () => {},
+      async () => {
+        const session = await casLogin();
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Login successful. Session expires at ${new Date(session.expiresAt).toISOString()}`,
+            },
+          ],
+        };
+      },
+    );
+  },
+);
+
+// ---------- Tool: Finish Interactive Login ----------
+
+server.tool(
+  "zentao_finish_login",
+  "Finish a visible interactive SSO login. Call this when the user says they completed login or replies '继续'.",
+  {},
+  async () => {
+    const result = await finishInteractiveLogin();
+    switch (result.status) {
+      case "success":
+        return {
+          content: [{
+            type: "text",
+            text: "登录验证成功，session 已保存，浏览器已关闭。请继续执行用户原先的禅道操作。",
+          }],
+        };
+      case "waiting":
+        return {
+          content: [{
+            type: "text",
+            text: "登录尚未完成，请继续在已打开的浏览器中操作，完成后再次回复“继续”。",
+          }],
+        };
+      case "missing":
+        return {
+          content: [{
+            type: "text",
+            text: "交互登录窗口不存在或已超时，请重新执行原先的禅道操作以发起登录。",
+          }],
+        };
+      case "unavailable":
+        return {
+          content: [{
+            type: "text",
+            text: `交互登录浏览器不可用，窗口已清理：${result.message}`,
+          }],
+          isError: true,
+        };
+    }
   },
 );
 
@@ -44,22 +100,21 @@ server.tool(
     limit: z.number().optional().default(20).describe("Max number of bugs to return"),
   },
   async (params) => {
-    // Ensure logged in
-    await loadSession() || await casLogin();
+    return runAuthenticated(ensureSession, async () => {
+      const bugs = await listBugs(params);
+      if (bugs.length === 0) {
+        return { content: [{ type: "text", text: "No bugs found." }] };
+      }
 
-    const bugs = await listBugs(params);
-    if (bugs.length === 0) {
-      return { content: [{ type: "text", text: "No bugs found." }] };
-    }
+      const text = bugs
+        .map(
+          (b) =>
+            `#${b.id} [${b.status}] P${b.pri} S${b.severity} — ${b.title}\n  Assigned: ${b.assignedTo} | Opened: ${b.openedBy} ${b.openedDate}`,
+        )
+        .join("\n\n");
 
-    const text = bugs
-      .map(
-        (b) =>
-          `#${b.id} [${b.status}] P${b.pri} S${b.severity} — ${b.title}\n  Assigned: ${b.assignedTo} | Opened: ${b.openedBy} ${b.openedDate}`,
-      )
-      .join("\n\n");
-
-    return { content: [{ type: "text", text }] };
+      return { content: [{ type: "text", text }] };
+    });
   },
 );
 
@@ -77,21 +132,21 @@ server.tool(
     limit: z.number().optional().default(50).describe("Max number of bugs to return"),
   },
   async ({ type, limit }) => {
-    await loadSession() || await casLogin();
+    return runAuthenticated(ensureSession, async () => {
+      const bugs = await getMyBugs(type, limit);
+      if (bugs.length === 0) {
+        return { content: [{ type: "text", text: "No bugs found." }] };
+      }
 
-    const bugs = await getMyBugs(type, limit);
-    if (bugs.length === 0) {
-      return { content: [{ type: "text", text: "No bugs found." }] };
-    }
+      const text = bugs
+        .map(
+          (b) =>
+            `#${b.id} [${b.status}] P${b.pri} S${b.severity} — ${b.title}\n  Assigned: ${b.assignedTo} | Opened: ${b.openedBy} ${b.openedDate}`,
+        )
+        .join("\n\n");
 
-    const text = bugs
-      .map(
-        (b) =>
-          `#${b.id} [${b.status}] P${b.pri} S${b.severity} — ${b.title}\n  Assigned: ${b.assignedTo} | Opened: ${b.openedBy} ${b.openedDate}`,
-      )
-      .join("\n\n");
-
-    return { content: [{ type: "text", text: `${bugs.length} bug(s):\n\n${text}` }] };
+      return { content: [{ type: "text", text: `${bugs.length} bug(s):\n\n${text}` }] };
+    });
   },
 );
 
@@ -104,30 +159,30 @@ server.tool(
     bugId: z.number().describe("Bug ID"),
   },
   async ({ bugId }) => {
-    await loadSession() || await casLogin();
+    return runAuthenticated(ensureSession, async () => {
+      const bug = await getBug(bugId);
+      const lines = [
+        `Bug #${bug.id}: ${bug.title}`,
+        `Status: ${bug.status} | Severity: ${bug.severity} | Priority: ${bug.pri}`,
+        `Type: ${bug.type}`,
+        `Assigned To: ${bug.assignedTo}`,
+        `Opened By: ${bug.openedBy} at ${bug.openedDate}`,
+        `Product: ${bug.product} | Module: ${bug.module}`,
+        bug.resolvedBy ? `Resolved By: ${bug.resolvedBy} (${bug.resolution})` : null,
+        `--- Steps ---`,
+        bug.steps,
+      ].filter(Boolean);
 
-    const bug = await getBug(bugId);
-    const lines = [
-      `Bug #${bug.id}: ${bug.title}`,
-      `Status: ${bug.status} | Severity: ${bug.severity} | Priority: ${bug.pri}`,
-      `Type: ${bug.type}`,
-      `Assigned To: ${bug.assignedTo}`,
-      `Opened By: ${bug.openedBy} at ${bug.openedDate}`,
-      `Product: ${bug.product} | Module: ${bug.module}`,
-      bug.resolvedBy ? `Resolved By: ${bug.resolvedBy} (${bug.resolution})` : null,
-      `--- Steps ---`,
-      bug.steps,
-    ].filter(Boolean);
-
-    if (bug.images.length > 0) {
-      lines.push(`--- 图片附件 (${bug.images.length}) ---`);
-      for (const img of bug.images) {
-        lines.push(`  - fileId=${img.fileId}  ${img.filename}  (来源: ${img.source})`);
+      if (bug.images.length > 0) {
+        lines.push(`--- 图片附件 (${bug.images.length}) ---`);
+        for (const img of bug.images) {
+          lines.push(`  - fileId=${img.fileId}  ${img.filename}  (来源: ${img.source})`);
+        }
+        lines.push(`提示: 用 zentao_get_bug_image(bugId=${bug.id}, fileId=...) 读取图片内容。`);
       }
-      lines.push(`提示: 用 zentao_get_bug_image(bugId=${bug.id}, fileId=...) 读取图片内容。`);
-    }
 
-    return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") }] };
+    });
   },
 );
 
@@ -141,15 +196,15 @@ server.tool(
     fileId: z.number().describe("Image fileId from the bug's attachment list (e.g. 134868)"),
   },
   async ({ bugId, fileId }) => {
-    await loadSession() || await casLogin();
-
-    const { data, mimeType, filename } = await getBugImage(bugId, fileId);
-    return {
-      content: [
-        { type: "text", text: `${filename} (${mimeType}, ${data.length} bytes)` },
-        { type: "image", data: data.toString("base64"), mimeType },
-      ],
-    };
+    return runAuthenticated(ensureSession, async () => {
+      const { data, mimeType, filename } = await getBugImage(bugId, fileId);
+      return {
+        content: [
+          { type: "text", text: `${filename} (${mimeType}, ${data.length} bytes)` },
+          { type: "image", data: data.toString("base64"), mimeType },
+        ],
+      };
+    });
   },
 );
 
@@ -169,12 +224,12 @@ server.tool(
     comment: z.string().optional().describe("备注(给测试人员看,非代码细节): 用通俗语言说明本次修改的影响范围、测试时需要重点回归/关注的功能点。面向测试视角,不要罗列代码改动。支持多行,空行分段、单换行会转为 <br/>。"),
   },
   async ({ bugId, resolution, build, comment }) => {
-    await loadSession() || await casLogin();
-
-    await resolveBug(bugId, resolution, build, comment);
-    return {
-      content: [{ type: "text", text: `Bug #${bugId} resolved as "${resolution}".` }],
-    };
+    return runAuthenticated(ensureSession, async () => {
+      await resolveBug(bugId, resolution, build, comment);
+      return {
+        content: [{ type: "text", text: `Bug #${bugId} resolved as "${resolution}".` }],
+      };
+    });
   },
 );
 
@@ -188,12 +243,12 @@ server.tool(
     content: z.string().describe("Comment content. 支持多行: 空行分段, 单个换行会转为 <br/>。"),
   },
   async ({ bugId, content }) => {
-    await loadSession() || await casLogin();
-
-    await addComment(bugId, content);
-    return {
-      content: [{ type: "text", text: `Comment added to Bug #${bugId}.` }],
-    };
+    return runAuthenticated(ensureSession, async () => {
+      await addComment(bugId, content);
+      return {
+        content: [{ type: "text", text: `Comment added to Bug #${bugId}.` }],
+      };
+    });
   },
 );
 
