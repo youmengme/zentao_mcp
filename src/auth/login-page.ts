@@ -15,3 +15,27 @@ export function isCasLoginUrl(candidate: string, configuredCasUrl: string): bool
     return false;
   }
 }
+
+export interface LoginPage {
+  url(): string;
+  fill(selector: string, value: string): Promise<void>;
+  click(selector: string): Promise<void>;
+}
+
+export interface LoginPageConfig {
+  casUrl: string;
+  username: string;
+  password: string;
+}
+
+export async function submitConfiguredCredentials(
+  page: LoginPage,
+  loginConfig: LoginPageConfig,
+): Promise<boolean> {
+  if (!isCasLoginUrl(page.url(), loginConfig.casUrl)) return false;
+
+  await page.fill("#username", loginConfig.username);
+  await page.fill("#password", loginConfig.password);
+  await page.click('button[name="submitBtn"]');
+  return true;
+}

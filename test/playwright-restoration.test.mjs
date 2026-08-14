@@ -12,6 +12,10 @@ test("Playwright drives CAS login and ZenTao write forms", () => {
 
   assert.equal(pkg.dependencies["playwright-core"], "^1.52.0");
   assert.match(login, /chromium\.launch\(\{ channel: "chrome", headless \}\)/);
+  assert.match(login, /headless: false/);
+  assert.match(login, /config\.casUrl/);
+  assert.match(login, /export const finishInteractiveLogin/);
+  assert.doesNotMatch(login, /sso\.aihuishou\.com\/cas\/login/);
   assert.match(bug, /bug-resolve-\$\{bugId\}\.html\?onlybody=yes/);
   assert.match(comment, /bug-edit-\$\{bugId\}\.html/);
   assert.doesNotMatch(bug, /postAction\(/);
