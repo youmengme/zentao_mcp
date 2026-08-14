@@ -7,6 +7,7 @@ import {
   casLogin,
   finishInteractiveLogin,
   loadSession,
+  shutdownInteractiveLogin,
 } from "./auth/cas-login.js";
 import { listBugs, getBug, getBugImage, resolveBug, getMyBugs } from "./api/bug.js";
 import { addComment } from "./api/comment.js";
@@ -20,6 +21,17 @@ const server = new McpServer({
 async function ensureSession() {
   return (await loadSession()) ?? casLogin();
 }
+
+let shuttingDown = false;
+async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  await shutdownInteractiveLogin();
+  process.exit(signal === "SIGTERM" ? 143 : 130);
+}
+
+process.once("SIGINT", () => void shutdown("SIGINT"));
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
 // ---------- Tool: Login ----------
 

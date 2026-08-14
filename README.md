@@ -5,6 +5,7 @@
 ## 功能
 
 - **zentao_login** — CAS 自动登录，获取/刷新 session
+- **zentao_finish_login** — 用户完成可见 SSO 登录后，验证并保存 session
 - **zentao_list_bugs** — 查询 Bug 列表（按产品/项目/指派人/状态筛选）
 - **zentao_my_bugs** — 查询与我相关的 Bug（指派给我 / 由我创建 / 由我解决）
 - **zentao_get_bug** — 获取 Bug 详情，并列出正文/评论/附件中的图片
@@ -49,6 +50,16 @@ npx ahs-zentao add cursor
 
 安装完成后重启对应客户端即可使用。
 
+### 自动登录失败时
+
+正常情况下，Playwright 会在无头 Chrome 中使用已配置的账号密码自动登录，不会显示浏览器窗口。如果自动认证已经到达 SSO 页面但无法完成，MCP 会重新打开一个可见 Chrome 窗口：
+
+1. 在可见窗口中完成验证码、二次验证或其他登录操作。
+2. 完成后在对话中回复“继续”。
+3. AI 会调用 `zentao_finish_login` 验证登录、保存 session 并关闭窗口，然后重新执行原先的禅道操作。
+
+可见登录窗口最多保留 10 分钟，同时只会打开一个。该能力要求 MCP 运行在用户本机的桌面环境中；远程服务器、容器或其他无图形界面的环境无法显示降级登录窗口，并会返回明确的环境错误。
+
 ## 使用示例
 
 接入后可以直接用自然语言操作禅道：
@@ -74,7 +85,7 @@ npx ahs-zentao add cursor
 
 ## 技术实现
 
-- **认证**：Playwright 驱动本机 Chrome 完成 CAS SSO 登录，提取 session cookie，后续 API 调用复用该 session
+- **认证**：Playwright 默认在无头 Chrome 中使用配置凭据自动完成 CAS SSO；自动认证未完成时，降级为可见 Chrome，由用户完成登录后调用 `zentao_finish_login` 提取 session cookie
 - **读取操作**：通过禅道的 `.json` 后缀路由获取结构化数据（轻量 HTTP 请求）
 - **写入操作**：通过 Playwright 操作禅道表单页面提交（兼容 KindEditor 富文本和 chosen 下拉组件）
 - **图片读取**：解析正文/评论/附件中的 `file-read-<id>` 引用，按需带 session 下载图片字节，以 MCP image 内容块返回

@@ -23,4 +23,7 @@ test("Playwright drives CAS login and ZenTao write forms", () => {
   assert.doesNotMatch(comment, /postAction\(/);
   assert.match(index, /"zentao_finish_login"/);
   assert.match(index, /runAuthenticated/);
+  assert.match(index, /process\.once\("SIGINT"/);
+  assert.match(index, /process\.once\("SIGTERM"/);
+  assert.match(index, /await shutdownInteractiveLogin\(\)/);
 });
