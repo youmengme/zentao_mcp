@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  classifySessionResponse,
+  isAuthenticatedSessionResponse,
   isCasLoginUrl,
   submitConfiguredCredentials,
 } from "../dist/auth/login-page.js";
@@ -55,4 +57,23 @@ test("does not touch a non-CAS page", async () => {
     username: "alice",
     password: "secret",
   }), false);
+});
+
+test("accepts only terminal successful responses as authenticated", () => {
+  assert.equal(isAuthenticatedSessionResponse(200, null), true);
+  assert.equal(isAuthenticatedSessionResponse(204, null), true);
+  assert.equal(isAuthenticatedSessionResponse(401, null), false);
+  assert.equal(isAuthenticatedSessionResponse(302, null), false);
+  assert.equal(
+    isAuthenticatedSessionResponse(302, "https://sso.example.com/cas/login"),
+    false,
+  );
+  assert.equal(
+    isAuthenticatedSessionResponse(302, "https://zentao.example.com/dashboard"),
+    false,
+  );
+  assert.equal(classifySessionResponse(500), "error");
+  assert.equal(classifySessionResponse(404), "error");
+  assert.equal(classifySessionResponse(401), "unauthenticated");
+  assert.equal(classifySessionResponse(302), "unauthenticated");
 });

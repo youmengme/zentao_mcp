@@ -16,6 +16,7 @@ export interface InteractiveLoginDependencies {
   now(): number;
   schedule(callback: () => void | Promise<void>, delayMs: number): unknown;
   cancel(handle: unknown): void;
+  shutdownGraceMs?: number;
 }
 
 export type FinishLoginResult =
@@ -39,6 +40,7 @@ export class InteractiveLoginManager {
   private starting: Promise<void> | undefined;
   private finishing: Promise<FinishLoginResult> | undefined;
   private timer: unknown;
+  private generation = 0;
 
   constructor(private readonly deps: InteractiveLoginDependencies) {}
 
@@ -49,15 +51,23 @@ export class InteractiveLoginManager {
   async start(): Promise<void> {
     if (this.window) return;
     if (!this.starting) {
-      this.starting = this.open().finally(() => {
-        this.starting = undefined;
+      const generation = this.generation;
+      let tracked: Promise<void>;
+      tracked = this.open(generation).finally(() => {
+        if (this.starting === tracked) this.starting = undefined;
       });
+      this.starting = tracked;
     }
     await this.starting;
   }
 
-  private async open(): Promise<void> {
+  private async open(generation: number): Promise<void> {
     const opened = await this.deps.openWindow();
+    if (generation !== this.generation) {
+      await opened.close().catch(() => {});
+      return;
+    }
+
     this.window = opened;
     opened.onClosed(() => this.cleanup(opened));
     this.timer = this.deps.schedule(
@@ -68,21 +78,29 @@ export class InteractiveLoginManager {
 
   finish(): Promise<FinishLoginResult> {
     if (!this.finishing) {
-      this.finishing = this.complete().finally(() => {
-        this.finishing = undefined;
+      let tracked: Promise<FinishLoginResult>;
+      tracked = this.complete().finally(() => {
+        if (this.finishing === tracked) this.finishing = undefined;
       });
+      this.finishing = tracked;
     }
     return this.finishing;
   }
 
   private async complete(): Promise<FinishLoginResult> {
-    if (this.starting) await this.starting;
-    const opened = this.window;
-    if (!opened) return { status: "missing" };
-
+    let opened: InteractiveWindow | undefined;
     try {
+      if (this.starting) await this.starting;
+      opened = this.window;
+      if (!opened) return { status: "missing" };
+
       const sid = await opened.readSessionId();
-      if (!sid || !(await this.deps.verifySession(sid))) {
+      if (this.window !== opened) return { status: "missing" };
+      if (!sid) return { status: "waiting" };
+
+      const verified = await this.deps.verifySession(sid);
+      if (this.window !== opened) return { status: "missing" };
+      if (!verified) {
         return { status: "waiting" };
       }
 
@@ -92,32 +110,49 @@ export class InteractiveLoginManager {
       });
       await this.cleanup(opened);
       return { status: "success" };
-    } catch (error) {
+    } catch {
+      if (!opened) {
+        return {
+          status: "unavailable",
+          message: "Interactive browser session is unavailable",
+        };
+      }
+      if (this.window !== opened) return { status: "missing" };
       await this.cleanup(opened);
       return {
         status: "unavailable",
-        message: error instanceof Error
-          ? error.message
-          : "Interactive browser is unavailable",
+        message: "Interactive browser session is unavailable",
       };
     }
   }
 
   async shutdown(): Promise<void> {
-    if (this.starting) {
-      try {
-        await this.starting;
-      } catch {
-        return;
-      }
-    }
-    if (this.finishing) await this.finishing;
+    const starting = this.starting;
+    this.starting = undefined;
+    this.finishing = undefined;
     await this.cleanup();
+    if (starting) await this.waitForStartupDuringShutdown(starting);
+  }
+
+  private waitForStartupDuringShutdown(starting: Promise<void>): Promise<void> {
+    const graceMs = this.deps.shutdownGraceMs ?? 2_000;
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(finish, graceMs);
+      void starting.then(finish, finish);
+    });
   }
 
   private async cleanup(expected?: InteractiveWindow): Promise<void> {
     if (expected && this.window !== expected) return;
 
+    this.generation += 1;
     const opened = this.window;
     this.window = undefined;
     if (this.timer !== undefined) {

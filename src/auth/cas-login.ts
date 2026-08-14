@@ -1,4 +1,4 @@
-import { chromium, type Browser } from "playwright-core";
+import { chromium } from "playwright-core";
 import { config } from "../config.js";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { isDebug, log } from "../debug.js";
@@ -8,16 +8,22 @@ import {
   type InteractiveWindow,
 } from "./interactive-login.js";
 import {
-  isCasLoginUrl,
+  classifySessionResponse,
+  isAuthenticatedSessionResponse,
   submitConfiguredCredentials,
 } from "./login-page.js";
+import {
+  runWithInteractiveLoginFallback,
+} from "./login-fallback.js";
+import {
+  performAutomaticLogin,
+  type AutomaticLoginWindow,
+} from "./automatic-login.js";
 
 export interface Session {
   zentaosid: string;
   expiresAt: number;
 }
-
-const SESSION_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
 export async function loadSession(): Promise<Session | null> {
   if (!existsSync(config.sessionFile)) return null;
@@ -34,23 +40,31 @@ export function saveSession(session: Session): void {
   writeFileSync(config.sessionFile, JSON.stringify(session, null, 2));
 }
 
-function errorSummary(error: unknown): string {
-  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+function errorType(error: unknown): string {
+  return error instanceof Error ? error.name : "UnknownError";
+}
+
+function safeLocation(candidate: string): { origin: string; pathname: string } {
+  try {
+    const url = new URL(candidate);
+    return { origin: url.origin, pathname: url.pathname };
+  } catch {
+    return { origin: "invalid", pathname: "invalid" };
+  }
 }
 
 async function verifySession(sid: string): Promise<boolean> {
   const response = await fetch(`${config.zentaoUrl}/my/`, {
     headers: { Cookie: `zentaosid=${sid}` },
     redirect: "manual",
+    signal: AbortSignal.timeout(15_000),
   });
 
-  if (response.status === 401) return false;
-  if (response.status === 302) {
-    const location = response.headers.get("location") ?? "";
-    const target = new URL(location, config.zentaoUrl).toString();
-    return !isCasLoginUrl(target, config.casUrl);
+  const classification = classifySessionResponse(response.status);
+  if (classification === "error") {
+    throw new Error("Session verification request failed");
   }
-  return response.ok;
+  return isAuthenticatedSessionResponse(response.status, response.headers.get("location"));
 }
 
 async function openInteractiveLoginWindow(): Promise<InteractiveWindow> {
@@ -59,24 +73,28 @@ async function openInteractiveLoginWindow(): Promise<InteractiveWindow> {
   try {
     const context = await browser.newContext();
     const page = await context.newPage();
-    await page.goto(`${config.zentaoUrl}/my/`, { waitUntil: "networkidle" });
+    await page.goto(`${config.zentaoUrl}/my/`, { waitUntil: "domcontentloaded" });
 
     try {
       await submitConfiguredCredentials(page, config);
     } catch (error) {
-      log("interactive credential submission did not finish", errorSummary(error));
+      log("interactive credential submission did not finish", {
+        errorType: errorType(error),
+      });
     }
 
     return {
       async readSessionId(): Promise<string | undefined> {
-        const cookies = await context.cookies();
+        const cookies = await context.cookies(config.zentaoUrl);
         return cookies.find((cookie) => cookie.name === "zentaosid")?.value;
       },
       close: () => browser.close(),
       onClosed(callback): void {
         browser.on("disconnected", () => {
           Promise.resolve(callback()).catch((error) => {
-            log("interactive login cleanup failed", errorSummary(error));
+            log("interactive login cleanup failed", {
+              errorType: errorType(error),
+            });
           });
         });
       },
@@ -94,7 +112,9 @@ const interactiveLogin = new InteractiveLoginManager({
   now: Date.now,
   schedule: (callback, delayMs) => setTimeout(() => {
     Promise.resolve(callback()).catch((error) => {
-      log("interactive login timeout cleanup failed", errorSummary(error));
+      log("interactive login timeout cleanup failed", {
+        errorType: errorType(error),
+      });
     });
   }, delayMs),
   cancel: (handle) => clearTimeout(handle as NodeJS.Timeout),
@@ -103,78 +123,76 @@ const interactiveLogin = new InteractiveLoginManager({
 export const finishInteractiveLogin = () => interactiveLogin.finish();
 export const shutdownInteractiveLogin = () => interactiveLogin.shutdown();
 
+async function openAutomaticLoginWindow(
+  headless: boolean,
+): Promise<AutomaticLoginWindow> {
+  const browser = await chromium.launch({ channel: "chrome", headless });
+  try {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+
+    return {
+      async navigate(): Promise<void> {
+        const entryUrl = `${config.zentaoUrl}/my/`;
+        log("navigating to", safeLocation(entryUrl));
+        await page.goto(entryUrl, { waitUntil: "domcontentloaded" });
+      },
+      async submitCredentials(): Promise<boolean> {
+        log("current location after navigation", safeLocation(page.url()));
+        const submitted = await submitConfiguredCredentials(page, config);
+        if (submitted) log("CAS login page detected, filling credentials");
+        return submitted;
+      },
+      async waitForAuthenticatedPage(): Promise<void> {
+        const zentaoHost = new URL(config.zentaoUrl).hostname;
+        await page.waitForURL(
+          (url) => url.hostname === zentaoHost && !url.pathname.includes("/cas/"),
+          { timeout: 15000 },
+        );
+        await page.waitForLoadState("domcontentloaded");
+        log("redirected back to zentao", safeLocation(page.url()));
+      },
+      async readSessionId(): Promise<string | undefined> {
+        const cookies = await context.cookies(config.zentaoUrl);
+        return cookies.find((cookie) => cookie.name === "zentaosid")?.value;
+      },
+      close: () => browser.close(),
+      isConnected: () => browser.isConnected(),
+    };
+  } catch (error) {
+    await browser.close().catch(() => {});
+    throw error;
+  }
+}
+
+async function automaticCasLogin(): Promise<Session> {
+  const headless = !isDebug();
+  log("casLogin start", { location: safeLocation(config.zentaoUrl), headless });
+
+  const session = await performAutomaticLogin({
+    openWindow: () => openAutomaticLoginWindow(headless),
+    verifySession,
+    saveSession,
+    now: Date.now,
+    onCleanupError: (cleanupErrorType) => {
+      log("automatic login browser cleanup failed", {
+        errorType: cleanupErrorType,
+      });
+    },
+  });
+  log("session saved, zentaosid length:", session.zentaosid.length);
+  return session;
+}
+
 export async function casLogin(): Promise<Session> {
   if (interactiveLogin.isPending()) {
     throw new InteractiveLoginRequiredError();
   }
 
-  const headless = !isDebug();
-  log("casLogin start", { zentaoUrl: config.zentaoUrl, headless });
-
-  let browser: Browser | undefined;
-  let pageReached = false;
-  try {
-    browser = await chromium.launch({ channel: "chrome", headless });
-    const context = await browser.newContext();
-    const page = await context.newPage();
-
-    // Navigate to zentao — triggers CAS redirect
-    const entryUrl = `${config.zentaoUrl}/my/`;
-    log("navigating to", entryUrl);
-    await page.goto(entryUrl, { waitUntil: "networkidle" });
-    pageReached = true;
-
-    // Check if CAS login page is shown
-    const currentUrl = new URL(page.url());
-    log("current location after navigation", {
-      origin: currentUrl.origin,
-      pathname: currentUrl.pathname,
-    });
-    if (await submitConfiguredCredentials(page, config)) {
-      log("CAS login page detected, filling credentials");
-
-      // Wait for redirect back to zentao (must be on the actual zentao host, not CAS service param)
-      const zentaoHost = new URL(config.zentaoUrl).hostname;
-      await page.waitForURL(
-        (url) => url.hostname === zentaoHost && !url.pathname.includes("/cas/"),
-        { timeout: 15000 },
-      );
-      await page.waitForLoadState("networkidle");
-      log("redirected back to zentao:", page.url());
-    }
-
-    // Extract zentaosid cookie
-    const cookies = await context.cookies();
-    const sid = cookies.find((c) => c.name === "zentaosid");
-
-    if (!sid) {
-      throw new Error("Login succeeded but zentaosid cookie not found");
-    }
-
-    // Verify the session is actually authenticated (not an anonymous SID)
-    if (!(await verifySession(sid.value))) {
-      throw new Error("CAS login appeared to succeed but session is not authenticated (got anonymous SID)");
-    }
-
-    const session: Session = {
-      zentaosid: sid.value,
-      expiresAt: Date.now() + SESSION_TTL,
-    };
-
-    saveSession(session);
-    log("session saved, zentaosid length:", sid.value.length);
-    return session;
-  } catch (error) {
-    if (!pageReached) throw error;
-
-    log("automatic CAS login failed; opening visible browser", errorSummary(error));
-    await browser?.close().catch(() => {});
-    browser = undefined;
-    await interactiveLogin.start();
-    throw new InteractiveLoginRequiredError();
-  } finally {
-    await browser?.close();
-  }
+  return runWithInteractiveLoginFallback(
+    automaticCasLogin,
+    () => interactiveLogin.start(),
+  );
 }
 
 export async function getOrRefreshSession(): Promise<Session> {

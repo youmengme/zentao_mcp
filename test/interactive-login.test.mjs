@@ -96,3 +96,159 @@ test("serializes concurrent completion requests", async () => {
   assert.deepEqual(h.completionCounts(), { verified: 1, saved: 1 });
   assert.deepEqual(h.counts(), { opened: 1, closed: 1 });
 });
+
+test("timeout wins when session verification is still in flight", async () => {
+  let expire;
+  let releaseVerification;
+  let verificationStarted;
+  let saved = false;
+  const started = new Promise((resolve) => { verificationStarted = resolve; });
+  const verification = new Promise((resolve) => { releaseVerification = resolve; });
+
+  const manager = new InteractiveLoginManager({
+    openWindow: async () => ({
+      readSessionId: async () => "sid-1",
+      close: async () => {},
+      onClosed: () => {},
+    }),
+    verifySession: async () => {
+      verificationStarted();
+      return verification;
+    },
+    saveSession: () => { saved = true; },
+    now: () => 1_000,
+    schedule: (callback) => { expire = callback; return 1; },
+    cancel: () => {},
+  });
+
+  await manager.start();
+  const finishing = manager.finish();
+  await started;
+  await expire();
+  releaseVerification(true);
+
+  assert.deepEqual(await finishing, { status: "missing" });
+  assert.equal(saved, false);
+});
+
+test("shutdown does not wait for stalled session verification", async () => {
+  let releaseVerification;
+  let verificationStarted;
+  let saved = false;
+  const started = new Promise((resolve) => { verificationStarted = resolve; });
+  const verification = new Promise((resolve) => { releaseVerification = resolve; });
+
+  const manager = new InteractiveLoginManager({
+    openWindow: async () => ({
+      readSessionId: async () => "sid-1",
+      close: async () => {},
+      onClosed: () => {},
+    }),
+    verifySession: async () => {
+      verificationStarted();
+      return verification;
+    },
+    saveSession: () => { saved = true; },
+    now: () => 1_000,
+    schedule: () => 1,
+    cancel: () => {},
+  });
+
+  await manager.start();
+  const finishing = manager.finish();
+  await started;
+  await manager.shutdown();
+  assert.equal(manager.isPending(), false);
+
+  releaseVerification(true);
+  assert.deepEqual(await finishing, { status: "missing" });
+  assert.equal(saved, false);
+});
+
+test("does not expose browser error details", async () => {
+  const manager = new InteractiveLoginManager({
+    openWindow: async () => ({
+      readSessionId: async () => { throw new Error("password=hunter2 ticket=abc123"); },
+      close: async () => {},
+      onClosed: () => {},
+    }),
+    verifySession: async () => true,
+    saveSession: () => {},
+    now: () => 1_000,
+    schedule: () => 1,
+    cancel: () => {},
+  });
+
+  await manager.start();
+  const result = await manager.finish();
+  assert.equal(result.status, "unavailable");
+  assert.doesNotMatch(result.message, /hunter2|abc123|password|ticket/);
+});
+
+test("shutdown closes a browser that finishes starting during the grace period", async () => {
+  let releaseWindow;
+  let closed = 0;
+  const pendingWindow = new Promise((resolve) => { releaseWindow = resolve; });
+  const manager = new InteractiveLoginManager({
+    openWindow: async () => pendingWindow,
+    verifySession: async () => true,
+    saveSession: () => {},
+    now: () => 1_000,
+    schedule: () => 1,
+    cancel: () => {},
+  });
+
+  const starting = manager.start();
+  let shutdownSettled = false;
+  const shuttingDown = manager.shutdown().then(() => { shutdownSettled = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(shutdownSettled, false);
+
+  releaseWindow({
+    readSessionId: async () => undefined,
+    close: async () => { closed += 1; },
+    onClosed: () => {},
+  });
+
+  await Promise.all([starting, shuttingDown]);
+  assert.equal(closed, 1);
+  assert.equal(manager.isPending(), false);
+});
+
+test("shutdown remains bounded when browser startup stalls", async () => {
+  const manager = new InteractiveLoginManager({
+    openWindow: async () => new Promise(() => {}),
+    verifySession: async () => true,
+    saveSession: () => {},
+    now: () => 1_000,
+    schedule: () => 1,
+    cancel: () => {},
+    shutdownGraceMs: 0,
+  });
+
+  void manager.start();
+  await manager.shutdown();
+  assert.equal(manager.isPending(), false);
+});
+
+test("finish redacts a concurrent visible browser startup failure", async () => {
+  let rejectStartup;
+  const startup = new Promise((_, reject) => { rejectStartup = reject; });
+  const manager = new InteractiveLoginManager({
+    openWindow: async () => startup,
+    verifySession: async () => true,
+    saveSession: () => {},
+    now: () => 1_000,
+    schedule: () => 1,
+    cancel: () => {},
+  });
+
+  const starting = manager.start().catch((error) => error);
+  const finishing = manager.finish();
+  rejectStartup(new Error("ticket=secret password=hunter2"));
+
+  assert.equal((await starting) instanceof Error, true);
+  const result = await finishing;
+  assert.equal(result.status, "unavailable");
+  assert.doesNotMatch(result.message, /secret|hunter2|ticket|password/);
+});

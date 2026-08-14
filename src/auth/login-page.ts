@@ -3,6 +3,28 @@ function normalizePath(pathname: string): string {
   return normalized || "/";
 }
 
+export function isAuthenticatedSessionResponse(
+  status: number,
+  _location: string | null,
+): boolean {
+  return classifySessionResponse(status) === "authenticated";
+}
+
+export type SessionResponseClassification =
+  | "authenticated"
+  | "unauthenticated"
+  | "error";
+
+export function classifySessionResponse(
+  status: number,
+): SessionResponseClassification {
+  if (status >= 200 && status < 300) return "authenticated";
+  if ((status >= 300 && status < 400) || status === 401 || status === 403) {
+    return "unauthenticated";
+  }
+  return "error";
+}
+
 export function isCasLoginUrl(candidate: string, configuredCasUrl: string): boolean {
   try {
     const current = new URL(candidate);
