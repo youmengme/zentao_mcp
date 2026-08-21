@@ -4,11 +4,8 @@ import { join } from "path";
 import { config as dotenvConfig } from "dotenv";
 
 const globalEnvPath = join(homedir(), ".ahs-zentao", ".env");
-const localEnvPath = join(process.cwd(), ".env");
 
-if (existsSync(localEnvPath)) {
-  dotenvConfig({ path: localEnvPath });
-} else if (existsSync(globalEnvPath)) {
+if (existsSync(globalEnvPath)) {
   dotenvConfig({ path: globalEnvPath });
 }
 
